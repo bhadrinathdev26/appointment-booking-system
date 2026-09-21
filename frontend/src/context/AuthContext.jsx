@@ -80,6 +80,11 @@ export const AuthProvider = ({ children }) => {
       const refreshToken = data.tokens?.refresh || data.refresh;
       const userObj = data.user || data;
 
+      // Fallback: If backend response didn't include tokens, login immediately
+      if (!accessToken && userData.password) {
+        return await login(payload.email, userData.password);
+      }
+
       if (accessToken) localStorage.setItem('access_token', accessToken);
       if (refreshToken) localStorage.setItem('refresh_token', refreshToken);
       if (userObj) localStorage.setItem('user_info', JSON.stringify(userObj));
