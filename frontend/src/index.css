@@ -1,0 +1,35 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+@layer base {
+  body {
+    @apply bg-slate-50 text-slate-900 antialiased font-sans min-h-screen;
+  }
+}
+
+/* Custom DayPicker overrides for appointment calendar */
+.rdp {
+  --rdp-cell-size: 40px;
+  --rdp-accent-color: #2563eb;
+  --rdp-background-color: #dbeafe;
+  margin: 0 !important;
+}
+
+.rdp-day_selected, .rdp-day_selected:focus-visible, .rdp-day_selected:hover {
+  background-color: #2563eb !important;
+  color: #ffffff !important;
+  font-weight: 600;
+  border-radius: 9999px;
+}
+
+.rdp-button:hover:not([disabled]):not(.rdp-day_selected) {
+  background-color: #f1f5f9;
+  border-radius: 9999px;
+}
+
+.rdp-day_disabled {
+  opacity: 0.25 !important;
+  cursor: not-allowed !important;
+  pointer-events: none;
+}

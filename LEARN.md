@@ -151,3 +151,25 @@ This document tracks technical decisions, architectural patterns, and interview 
 - **Q: How do you ensure automated reminder commands do not send duplicate emails if executed multiple times?**
   *A:* "By adding a `reminder_sent_at` timestamp field to the `Booking` model. The query explicitly filters by `reminder_sent_at__isnull=True`. As soon as an email is dispatched, `reminder_sent_at` is updated and saved. Any subsequent cron invocation ignores already-reminded appointments."
 
+---
+
+## Phase 7: Frontend Scaffolding, JWT Refresh Interceptor & Foundational Layout
+
+### Key Technical Decisions
+1. **Concurrency-Safe Axios Refresh Interceptor:**
+   - In single-page applications, multiple parallel API calls may fail with `401 Unauthorized` simultaneously when an access token expires.
+   - The Axios interceptor uses a `isRefreshing` mutex flag and a `failedQueue` promise array. When the first 401 triggers, subsequent failed requests are queued. Once the refresh token request succeeds, all queued requests are resolved with the new access token and retried without re-prompting the user.
+2. **Deterministic IST Time Zone Formatting on Client:**
+   - Client machines may be running in any local time zone (e.g. UTC, US/Pacific, BST). If the client formats timestamps using standard browser `Intl` or `Date.prototype.toLocaleString()`, slots and working hours would display in the client's local time rather than the business's timezone.
+   - Using `formatInTimeZone(date, 'Asia/Kolkata', ...)` from `date-fns-tz` guarantees that appointment slots, calendar grids, and cancellation policies display uniformly in Indian Standard Time (IST).
+3. **Demo Sandbox Architecture:**
+   - Real-world hiring managers and interviewers often test portfolio projects without wanting to register a new account or copy-paste credentials.
+   - When `VITE_DEMO_MODE=true`, the `DemoBanner` renders a quick 1-click persona switcher (Admin, Clinic Provider, Salon Provider, and Customer). In production mode, this flag is disabled without touching application logic.
+
+### Interview Questions for Phase 7
+- **Q: How do you handle simultaneous 401 errors when an access token expires while multiple API calls are in flight?**
+  *A:* "Using a queue mechanism in the Axios response interceptor. We flag `isRefreshing = true` on the first 401 and queue all subsequent failed requests in an array of pending promises. When the refresh endpoint returns a fresh access token, we process the queue, update the authorization headers, and replay all original requests seamlessly."
+- **Q: Why format dates with an explicit time zone like `Asia/Kolkata` on the frontend instead of relying on the user's browser clock?**
+  *A:* "Service businesses operate in fixed geographic locations. If an overseas interviewer opens the app from London or New York, relying on browser local time would cause a 10:00 AM IST clinic slot to display as 4:30 AM or 00:30 AM, confusing slot availability and calendar navigation. Locking display formatting to the business timezone ensures consistency."
+
+
