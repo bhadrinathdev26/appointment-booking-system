@@ -45,3 +45,21 @@ This document tracks technical decisions, architectural patterns, and interview 
   *A:* "In `RegisterSerializer.create()`, the `role` field is explicitly set to `User.ROLE_CUSTOMER` in Python code, ignoring any client-supplied role parameter. Furthermore, serializers for user self-updates mark `role` as read-only."
 - **Q: Why can't a Provider role be changed to a Customer or Admin?**
   *A:* "In a service marketplace, providers hold foreign key references across working schedules, services, and appointment snapshots. Demoting or altering a provider's role would create architectural inconsistency. Instead, providers are deactivated, which safely hides them from new customer discovery while keeping existing bookings intact."
+
+---
+
+## Phase 3: Provider Profile, Services, Working Hours & Time-Off Integrity
+
+### Key Technical Decisions
+1. **DRF Serializer Validation over `Model.clean()`:**
+   - In Django REST Framework, `model.clean()` is not invoked automatically during serializer validation. All schedule interval constraints, duration multiples of 5, and leave overlap checks are implemented directly in serializer `validate()` methods.
+2. **Preventing Broken Past Bookings via Soft Service Deactivation:**
+   - When a provider deletes a service that has past or existing appointments, the service is soft-deactivated (`is_active = False`) instead of hard deleted. This preserves historical invoice records while hiding the service from new booking requests.
+3. **Pessimistic Locking on Time-Off Scheduling:**
+   - To prevent a race condition where a customer books an appointment at the exact millisecond a provider schedules a leave, `TimeOff` creation acquires a row lock on `ProviderProfile` before inspecting confirmed bookings. Conflicting bookings are returned in a structured 400 error payload.
+
+### Interview Questions for Phase 3
+- **Q: How do you handle multi-interval working hours (e.g. lunch breaks)?**
+  *A:* "Rather than storing a single start and end time per day, `WorkingHours` stores multiple distinct intervals per weekday. Each interval is validated so that `end_time > start_time` and no two intervals overlap on the same weekday for that provider. A gap between two intervals (e.g., 13:00 to 14:00) represents an unbookable break."
+- **Q: Why do you lock the provider row when scheduling time off?**
+  *A:* "Without locking, a customer transaction could confirm a new booking after our query checks for conflicts but before the `TimeOff` record is inserted. Locking the provider row serializes both operations, preventing overlapping appointments and leaves."
