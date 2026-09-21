@@ -87,3 +87,39 @@ This document tracks technical decisions, architectural patterns, and interview 
   *A:* "Storing future empty slots creates massive database bloat and synchronization nightmares whenever a provider modifies their weekly working hours, takes a day off, or changes their slot duration. Dynamic calculation takes milliseconds, executes only two bounded queries, and guarantees zero stale availability."
 - **Q: How do you verify that back-to-back appointments do not conflict?**
   *A:* "Using strict inequality overlap checking (`slot_start < existing_end AND slot_end > existing_start`). If Slot A is 10:00 to 10:30 and Slot B is 10:30 to 11:00, `slot_start (10:30) < existing_end (10:30)` evaluates to `False`, so no conflict is detected and the slot is rightly marked available."
+
+---
+
+## Phase 5: Booking Creation with Locking & Lifecycle
+
+### Key Technical Decisions
+1. **Strict Double-Locking Hierarchy (Customer -> Provider -> Booking):**
+   - To prevent deadlocks under high concurrency, all transactional booking operations acquire pessimistic row locks in a strictly uniform order:
+     1. Customer row (`User.objects.select_for_update()`)
+     2. Provider row (`ProviderProfile.objects.select_for_update()`)
+     3. Booking row (`Booking.objects.select_for_update()`, if updating/rescheduling)
+   - Because all transactions acquire locks in this exact identical sequence, circular wait conditions (deadlocks) are mathematically impossible.
+2. **Fresh Verification Under Pessimistic Lock:**
+   - Once locks are acquired, the transaction re-fetches the `Service`, `ProviderProfile`, and provider's `User` record to ensure all entities are still active (`is_active=True`). This guards against the race condition where an admin or provider deactivates an account or service while a booking payload is in flight.
+3. **Customer Self-Overlap Prevention:**
+   - Locking the customer row allows an atomic query across the customer's own confirmed bookings. Even if a customer fires concurrent requests to book two different providers at the exact same hour, only one can acquire the customer lock first; the second will detect the time overlap and be rejected with HTTP 409 Conflict.
+4. **Snapshot Preservation for Historical and Rescheduling Accuracy:**
+   - At booking time, `service_name`, `service_duration`, and `service_price` are captured permanently on the `Booking` record.
+   - When rescheduling, the booking's new end time is calculated using `booking.service_duration`, preserving the original terms even if the provider has modified the service duration since the initial booking.
+5. **Enforcing Cutoff Windows:**
+   - Customers may only cancel or reschedule appointments **strictly more than 4 hours** ahead (`CANCEL_CUTOFF_HOURS = 4`). Requests made $\le 4$ hours before `start_at` are rejected with HTTP 400.
+   - Providers and Admins can cancel or reschedule any time prior to the start time.
+   - Once an appointment has started or concluded, it cannot be cancelled or rescheduled.
+6. **Scoped Access and REST Immutability:**
+   - Direct `PUT`, `PATCH`, and `DELETE` requests to `/api/bookings/{id}/` are blocked with `HTTP 405 Method Not Allowed`. Status transitions must follow explicit action verbs (`/cancel/`, `/reschedule/`, `/complete/`, `/no-show/`).
+   - `BookingViewSet.get_queryset()` scopes records automatically based on user role: Customers see only their bookings, Providers see bookings assigned to their business, and Admins see everything. A customer querying another customer's booking receives a clean `404 Not Found`, not a revealing `403 Forbidden`.
+7. **Thread Cleanup in Concurrency Tests:**
+   - Multi-threaded race condition tests (`TransactionTestCase`) explicitly invoke `connection.close()` in worker `finally` blocks, preventing stalled MySQL connection pools during test runner teardown.
+
+### Interview Questions for Phase 5
+- **Q: How do you prevent double bookings when two users try to book the exact same slot at the exact same millisecond?**
+  *A:* "We wrap booking creation in a database transaction with pessimistic locking (`SELECT ... FOR UPDATE`). We lock the provider's row first, re-calculate the available slots under that lock, and verify slot availability. If user A's transaction commits first, user B's transaction will re-evaluate availability once it acquires the lock, discover the slot is no longer open, and raise a `ConflictError` resulting in an HTTP 409 Conflict response."
+- **Q: How do you prevent a customer from booking two different providers at the exact same time?**
+  *A:* "By locking the customer row with `select_for_update()` before checking the customer's existing bookings. Any concurrent booking attempts for the same customer are serialized by that lock, ensuring the second transaction sees the first booking and rejects the overlapping appointment."
+- **Q: Why snapshot service duration and price on the booking model?**
+  *A:* "A service business frequently updates its prices or service lengths. If a customer booked a 30-minute massage for Rs. 500, and the provider later increases the price to Rs. 800 or changes the duration to 45 minutes, the existing booking and invoice must remain unchanged. When rescheduling, we must also honor the booked duration snapshot."
