@@ -16,8 +16,13 @@ SECRET_KEY = os.environ.get('SECRET_KEY', 'slotsync-super-secret-key-prod-2026-x
 
 DEBUG = os.environ.get('DEBUG', 'True').lower() in ('true', '1', 'yes')
 
-allowed_hosts_str = os.environ.get('ALLOWED_HOSTS', '127.0.0.1,localhost')
+allowed_hosts_str = os.environ.get('ALLOWED_HOSTS', '127.0.0.1,localhost,.onrender.com')
 ALLOWED_HOSTS = [h.strip() for h in allowed_hosts_str.split(',') if h.strip()]
+if '*' not in ALLOWED_HOSTS:
+    ALLOWED_HOSTS.append('.onrender.com')
+
+csrf_trusted_raw = os.environ.get('CSRF_TRUSTED_ORIGINS', 'https://*.onrender.com,https://*.vercel.app')
+CSRF_TRUSTED_ORIGINS = [orig.strip() for orig in csrf_trusted_raw.split(',') if orig.strip()]
 
 INSTALLED_APPS = [
     'django.contrib.admin',
@@ -76,7 +81,9 @@ if db_engine == 'mysql':
         'charset': 'utf8mb4',
         'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
     }
-    if os.environ.get('DB_SSL_REQUIRE', '').lower() in ('true', '1', 'yes'):
+    db_host = os.environ.get('DB_HOST', '127.0.0.1')
+    ssl_flag = os.environ.get('DB_SSL_REQUIRE', '').lower() in ('true', '1', 'yes')
+    if ssl_flag or 'aivencloud.com' in db_host:
         db_options['ssl'] = {'ssl': True, 'check_hostname': False}
 
     DATABASES = {
@@ -85,7 +92,7 @@ if db_engine == 'mysql':
             'NAME': os.environ.get('DB_NAME', 'booking_db'),
             'USER': os.environ.get('DB_USER', 'booking_user'),
             'PASSWORD': os.environ.get('DB_PASSWORD', ''),
-            'HOST': os.environ.get('DB_HOST', '127.0.0.1'),
+            'HOST': db_host,
             'PORT': os.environ.get('DB_PORT', '3306'),
             'OPTIONS': db_options,
             'TEST': {
