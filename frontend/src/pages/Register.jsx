@@ -13,6 +13,7 @@ export default function Register() {
     username: '',
     email: '',
     password: '',
+    password_confirm: '',
     first_name: '',
     last_name: '',
     phone: '',
@@ -28,6 +29,12 @@ export default function Register() {
   const handleSubmit = async (e) => {
     e.preventDefault();
     setError(null);
+
+    if (formData.password !== formData.password_confirm) {
+      setError('Passwords do not match. Please re-enter.');
+      return;
+    }
+
     setLoading(true);
 
     try {
@@ -166,6 +173,26 @@ export default function Register() {
                 required
                 name="password"
                 value={formData.password}
+                onChange={handleChange}
+                placeholder="••••••••"
+                className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition"
+              />
+            </div>
+          </div>
+
+          <div>
+            <label className="block text-xs font-semibold uppercase text-slate-600 tracking-wider mb-1.5">
+              Confirm Password *
+            </label>
+            <div className="relative">
+              <div className="absolute inset-y-0 left-0 pl-3 flex items-center pointer-events-none text-slate-400">
+                <Lock className="h-4 w-4" />
+              </div>
+              <input
+                type="password"
+                required
+                name="password_confirm"
+                value={formData.password_confirm}
                 onChange={handleChange}
                 placeholder="••••••••"
                 className="w-full pl-10 pr-4 py-2 bg-slate-50 border border-slate-200 rounded-xl text-sm focus:outline-none focus:ring-2 focus:ring-blue-500/20 focus:border-blue-600 transition"

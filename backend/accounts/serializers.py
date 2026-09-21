@@ -40,7 +40,7 @@ class RegisterSerializer(serializers.ModelSerializer):
     )
     password_confirm = serializers.CharField(
         write_only=True,
-        required=True,
+        required=False,
         style={'input_type': 'password'}
     )
 
@@ -58,7 +58,8 @@ class RegisterSerializer(serializers.ModelSerializer):
         ]
 
     def validate(self, attrs):
-        if attrs['password'] != attrs['password_confirm']:
+        confirm = attrs.get('password_confirm')
+        if confirm is not None and attrs['password'] != confirm:
             raise ValidationError({"password_confirm": "Passwords do not match."})
         attrs['email'] = attrs['email'].lower()
         return attrs
