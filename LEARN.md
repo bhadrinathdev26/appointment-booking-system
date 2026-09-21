@@ -123,3 +123,31 @@ This document tracks technical decisions, architectural patterns, and interview 
   *A:* "By locking the customer row with `select_for_update()` before checking the customer's existing bookings. Any concurrent booking attempts for the same customer are serialized by that lock, ensuring the second transaction sees the first booking and rejects the overlapping appointment."
 - **Q: Why snapshot service duration and price on the booking model?**
   *A:* "A service business frequently updates its prices or service lengths. If a customer booked a 30-minute massage for Rs. 500, and the provider later increases the price to Rs. 800 or changes the duration to 45 minutes, the existing booking and invoice must remain unchanged. When rescheduling, we must also honor the booked duration snapshot."
+
+---
+
+## Phase 6: Notifications, ICS Calendar Generation, Reminders & Dashboard Aggregations
+
+### Key Technical Decisions
+1. **RFC 5545 iCalendar Standard Compliance:**
+   - The `.ics` calendar download endpoint generates standard RFC 5545 calendar feeds directly from appointment records.
+   - **Line Endings:** RFC 5545 strictly mandates `\r\n` (CRLF) line delimiters. Standard Unix `\n` line breaks cause import errors on Microsoft Outlook, Apple Calendar, and Google Calendar.
+   - **UTC Timestamps:** All dates are converted to UTC and formatted as `YYYYMMDDTHHMMSSZ` (`Z` suffix denoting Zulu / UTC time) to avoid time zone ambiguity when imported into client devices set to different time zones.
+   - **Stable UIDs:** Unique identifiers formatted as `booking-{id}@{domain}` ensure that downloading an updated `.ics` file for a rescheduled appointment updates the existing calendar event on the user's phone or desktop rather than creating a duplicate entry.
+   - **Access Scoping:** The ICS endpoint enforces standard object ownership, returning `404 Not Found` if a customer attempts to download an iCalendar file for another user's appointment.
+2. **Idempotent Automated Reminders via Management Command:**
+   - The `send_reminders` command queries confirmed bookings occurring within the rolling 24-hour window where `reminder_sent_at` is `NULL`.
+   - By immediately recording `reminder_sent_at = timezone.now()` within the update flow, subsequent or repeated runs of the command (e.g. from a recurring cron job every hour) will never re-send duplicate notifications to the same client.
+3. **Database-Agnostic Dashboard Aggregation:**
+   - To report daily booking volumes over the past 14 days on the Admin dashboard without depending on MySQL's timezone tables (`mysql.time_zone`), the system generates aware datetime ranges in Python and aggregates counts in memory.
+   - For Providers, today's schedule is bounded using local IST midnight-to-midnight ranges, and the revenue sum is calculated over completed appointments using Django's `aggregate(models.Sum('service_price'))`.
+4. **Defensive Demo Dataset Seeding:**
+   - The `seed_demo` command refuses execution if `DEBUG=False` unless the explicit `--allow-production` flag is passed, preventing accidental test data injection into live production databases.
+   - It provisions realistic multi-interval weekly schedules, clinic/salon/tutor services, and 40 appointments distributed realistically across past completed, cancelled, and upcoming confirmed states.
+
+### Interview Questions for Phase 6
+- **Q: What are the common pitfalls when generating `.ics` iCalendar files dynamically?**
+  *A:* "First, failing to use CRLF (`\r\n`) line terminators as required by RFC 5545, which breaks parsers in Outlook and Apple Calendar. Second, using local or naive timestamps instead of UTC Zulu format (`YYYYMMDDTHHMMSSZ`). Third, omitting a deterministic UID, which causes calendar apps to duplicate events on reschedule instead of updating the existing entry."
+- **Q: How do you ensure automated reminder commands do not send duplicate emails if executed multiple times?**
+  *A:* "By adding a `reminder_sent_at` timestamp field to the `Booking` model. The query explicitly filters by `reminder_sent_at__isnull=True`. As soon as an email is dispatched, `reminder_sent_at` is updated and saved. Any subsequent cron invocation ignores already-reminded appointments."
+

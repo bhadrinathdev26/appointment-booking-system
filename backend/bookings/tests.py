@@ -1,6 +1,7 @@
 import zoneinfo
 import threading
 from datetime import datetime, date, time, timedelta
+from django.utils import timezone
 from django.test import TestCase, TransactionTestCase
 from django.contrib.auth import get_user_model
 from django.urls import reverse
@@ -650,3 +651,173 @@ class CustomerOverlapConcurrencyTests(TransactionTestCase):
         self.assertEqual(statuses.count('success'), 1, f"Expected 1 success, got: {results}")
         self.assertEqual(statuses.count('conflict'), 1, f"Expected 1 conflict, got: {results}")
         self.assertEqual(Booking.objects.filter(customer=self.customer, start_at=target_slot).count(), 1)
+
+
+class Phase6FeatureTests(TestCase):
+    """
+    Tests for Phase 6 features:
+    1. RFC 5545 .ics Calendar export
+    2. send_reminders management command
+    3. Role-based Dashboard stats
+    4. seed_demo management command
+    """
+    def setUp(self):
+        from django.core.management import call_command
+        from django.core import mail
+        self.client = APIClient()
+
+        self.provider_user = User.objects.create_user(
+            email='prov_p6@example.com', username='prov_p6', password='Password123!', role=User.ROLE_PROVIDER
+        )
+        self.provider = ProviderProfile.objects.create(
+            user=self.provider_user, business_name='P6 Studio', category='salon', slot_interval_minutes=30
+        )
+        self.service = Service.objects.create(
+            provider=self.provider, name='Styling Session', duration_minutes=30, price=400.00
+        )
+        WorkingHours.objects.create(
+            provider=self.provider, weekday=0, start_time=time(9, 0), end_time=time(17, 0)
+        )
+
+        self.customer = User.objects.create_user(
+            email='cust_p6@example.com', username='cust_p6', password='Password123!', role=User.ROLE_CUSTOMER
+        )
+        self.other_customer = User.objects.create_user(
+            email='other_p6@example.com', username='other_p6', password='Password123!', role=User.ROLE_CUSTOMER
+        )
+        self.admin = User.objects.create_user(
+            email='admin_p6@example.com', username='admin_p6', password='Password123!', role=User.ROLE_ADMIN, is_staff=True
+        )
+
+    def test_ics_export_rfc5545_compliance(self):
+        start_at = datetime(2026, 10, 12, 10, 0, tzinfo=IST)
+        booking = create_booking(
+            customer_user=self.customer,
+            service_id=self.service.id,
+            start_at=start_at,
+            now_override=datetime(2026, 10, 1, 8, 0, tzinfo=IST)
+        )
+
+        # Customer downloads ICS
+        self.client.force_authenticate(user=self.customer)
+        url = reverse('booking-ics', args=[booking.id])
+        response = self.client.get(url)
+
+        self.assertEqual(response.status_code, status.HTTP_200_OK)
+        self.assertEqual(response['Content-Type'], 'text/calendar; charset=utf-8')
+        self.assertIn(f'appointment-{booking.id}.ics', response['Content-Disposition'])
+
+        content = response.content.decode('utf-8')
+        # Check CRLF line endings
+        self.assertIn('\r\n', content)
+        self.assertIn('BEGIN:VCALENDAR', content)
+        self.assertIn('VERSION:2.0', content)
+        self.assertIn('BEGIN:VEVENT', content)
+        self.assertIn(f'UID:booking-{booking.id}@', content)
+        self.assertIn('DTSTART:20261012T043000Z', content)  # 10:00 IST is 04:30 UTC
+        self.assertIn('SUMMARY:Styling Session with P6 Studio', content)
+        self.assertIn('END:VEVENT', content)
+        self.assertIn('END:VCALENDAR', content)
+
+        # Scoped 404 test: other customer cannot download
+        self.client.force_authenticate(user=self.other_customer)
+        unauth_response = self.client.get(url)
+        self.assertEqual(unauth_response.status_code, status.HTTP_404_NOT_FOUND)
+
+    def test_send_reminders_command(self):
+        from django.core.management import call_command
+        from django.core import mail
+
+        now = timezone.now()
+        # Create a confirmed booking 12 hours from now
+        start_at = now + timedelta(hours=12)
+        end_at = start_at + timedelta(minutes=30)
+        b = Booking.objects.create(
+            customer=self.customer,
+            provider=self.provider,
+            service=self.service,
+            start_at=start_at,
+            end_at=end_at,
+            status=Booking.STATUS_CONFIRMED,
+            service_name=self.service.name,
+            service_duration=30,
+            service_price=self.service.price,
+            reminder_sent_at=None
+        )
+
+        # Clear test mailbox
+        mail.outbox = []
+
+        call_command('send_reminders')
+
+        # Verify email was dispatched
+        self.assertGreater(len(mail.outbox), 0)
+        self.assertIn("Reminder: Upcoming Appointment", mail.outbox[0].subject)
+
+        # Verify timestamp updated
+        b.refresh_from_db()
+        self.assertIsNotNone(b.reminder_sent_at)
+
+    def test_dashboard_stats_endpoints(self):
+        # Create 1 completed booking, 1 confirmed upcoming booking
+        now = timezone.now()
+        Booking.objects.create(
+            customer=self.customer,
+            provider=self.provider,
+            service=self.service,
+            start_at=now - timedelta(days=1),
+            end_at=now - timedelta(days=1, minutes=-30),
+            status=Booking.STATUS_COMPLETED,
+            service_name=self.service.name,
+            service_duration=30,
+            service_price=self.service.price
+        )
+        Booking.objects.create(
+            customer=self.customer,
+            provider=self.provider,
+            service=self.service,
+            start_at=now + timedelta(days=2),
+            end_at=now + timedelta(days=2, minutes=30),
+            status=Booking.STATUS_CONFIRMED,
+            service_name=self.service.name,
+            service_duration=30,
+            service_price=self.service.price
+        )
+
+        url = reverse('dashboard-stats')
+
+        # 1. Customer stats
+        self.client.force_authenticate(user=self.customer)
+        res_cust = self.client.get(url)
+        self.assertEqual(res_cust.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_cust.data['role'], 'customer')
+        self.assertEqual(res_cust.data['upcoming_count'], 1)
+        self.assertEqual(res_cust.data['past_count'], 1)
+        self.assertIsNotNone(res_cust.data['next_appointment'])
+
+        # 2. Provider stats
+        self.client.force_authenticate(user=self.provider_user)
+        res_prov = self.client.get(url)
+        self.assertEqual(res_prov.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_prov.data['role'], 'provider')
+        self.assertEqual(res_prov.data['completed_count'], 1)
+        self.assertEqual(res_prov.data['total_revenue'], 400.00)
+        self.assertEqual(len(res_prov.data['weekday_distribution']), 7)
+
+        # 3. Admin stats
+        self.client.force_authenticate(user=self.admin)
+        res_admin = self.client.get(url)
+        self.assertEqual(res_admin.status_code, status.HTTP_200_OK)
+        self.assertEqual(res_admin.data['role'], 'admin')
+        self.assertGreaterEqual(res_admin.data['total_bookings'], 2)
+        self.assertIn('last_14_days_volume', res_admin.data)
+        self.assertEqual(len(res_admin.data['last_14_days_volume']), 14)
+
+    def test_seed_demo_command(self):
+        from django.core.management import call_command
+        call_command('seed_demo', allow_production=True)
+        # Verify demo accounts created
+        self.assertTrue(User.objects.filter(email='admin@slotsync.local').exists())
+        self.assertTrue(ProviderProfile.objects.filter(business_name='Apex Dental Care').exists())
+        self.assertTrue(Booking.objects.filter(status=Booking.STATUS_COMPLETED).exists())
+

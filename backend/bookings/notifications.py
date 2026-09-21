@@ -113,3 +113,33 @@ def send_booking_rescheduled_email(booking_id: int):
         )
     except Exception as e:
         logger.warning(f"Failed to send booking reschedule email for #{booking_id}: {e}")
+
+
+def send_reminder_email(booking_id: int):
+    try:
+        booking = Booking.objects.select_related('customer', 'provider').get(pk=booking_id)
+        subject = f"Reminder: Upcoming Appointment Tomorrow - {booking.service_name}"
+        time_str = format_ist_datetime(booking.start_at)
+
+        message = (
+            f"Hello {booking.customer.get_full_name() or booking.customer.username},\n\n"
+            f"This is a friendly reminder for your upcoming appointment:\n\n"
+            f"Service: {booking.service_name}\n"
+            f"Provider: {booking.provider.business_name}\n"
+            f"Date & Time: {time_str}\n"
+            f"Duration: {booking.service_duration} minutes\n"
+            f"Location: {booking.provider.address or 'Online / At provider location'}\n\n"
+            f"If you need to reschedule or cancel, please remember changes must be made at least 4 hours before the appointment.\n\n"
+            f"We look forward to seeing you!"
+        )
+
+        send_mail(
+            subject=subject,
+            message=message,
+            from_email=settings.DEFAULT_FROM_EMAIL if hasattr(settings, 'DEFAULT_FROM_EMAIL') else 'noreply@slotsync.local',
+            recipient_list=[booking.customer.email],
+            fail_silently=True,
+        )
+    except Exception as e:
+        logger.warning(f"Failed to send reminder email for #{booking_id}: {e}")
+
