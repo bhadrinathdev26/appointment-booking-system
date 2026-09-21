@@ -63,3 +63,27 @@ This document tracks technical decisions, architectural patterns, and interview 
   *A:* "Rather than storing a single start and end time per day, `WorkingHours` stores multiple distinct intervals per weekday. Each interval is validated so that `end_time > start_time` and no two intervals overlap on the same weekday for that provider. A gap between two intervals (e.g., 13:00 to 14:00) represents an unbookable break."
 - **Q: Why do you lock the provider row when scheduling time off?**
   *A:* "Without locking, a customer transaction could confirm a new booking after our query checks for conflicts but before the `TimeOff` record is inserted. Locking the provider row serializes both operations, preventing overlapping appointments and leaves."
+
+---
+
+## Phase 4: Dynamic Slot Generation Algorithm & Availability
+
+### Key Technical Decisions
+1. **On-Demand Calculation vs Phantom Slot Storage:**
+   - Rather than pre-generating and storing millions of potential appointment slots in the database, slots are computed dynamically on request in memory. This eliminates stale state and complex batch generation jobs.
+2. **Optimized Query Efficiency (Max 2 DB Queries per Day / Month):**
+   - For a single day, the generator executes at most 2 queries: one for the day's confirmed bookings and one for scheduled time-offs.
+   - For the month-availability calendar endpoint, the service fetches the entire month's bookings and time-offs in **exactly 2 queries**, then computes day availability in memory rather than running 31 separate queries.
+3. **Strict Overlap Detection Logic:**
+   - A candidate slot `[s, e]` overlaps with an existing interval `[b_start, b_end]` if and only if:
+     $$\text{s} < \text{b\_end} \quad \text{AND} \quad \text{e} > \text{b\_start}$$
+   - This mathematically allows back-to-back bookings (e.g. an appointment ending at 10:30 and the next starting at 10:30 do not overlap).
+4. **Boundary Invariants:**
+   - A slot starting exactly `MIN_NOTICE_HOURS` (2 hours) from the current timestamp is allowed (`>= min_start_time`).
+   - Appointments beyond `MAX_ADVANCE_DAYS` (60 days) are excluded.
+
+### Interview Questions for Phase 4
+- **Q: Why calculate slots dynamically instead of storing available slots in a database table?**
+  *A:* "Storing future empty slots creates massive database bloat and synchronization nightmares whenever a provider modifies their weekly working hours, takes a day off, or changes their slot duration. Dynamic calculation takes milliseconds, executes only two bounded queries, and guarantees zero stale availability."
+- **Q: How do you verify that back-to-back appointments do not conflict?**
+  *A:* "Using strict inequality overlap checking (`slot_start < existing_end AND slot_end > existing_start`). If Slot A is 10:00 to 10:30 and Slot B is 10:30 to 11:00, `slot_start (10:30) < existing_end (10:30)` evaluates to `False`, so no conflict is detected and the slot is rightly marked available."

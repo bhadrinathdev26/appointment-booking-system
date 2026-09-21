@@ -1,4 +1,5 @@
 from rest_framework import viewsets, permissions, status, generics
+from rest_framework.decorators import action
 from rest_framework.response import Response
 from rest_framework.exceptions import PermissionDenied, ValidationError
 from django_filters.rest_framework import DjangoFilterBackend
@@ -39,6 +40,90 @@ class ProviderViewSet(viewsets.ReadOnlyModelViewSet):
         if self.action == 'retrieve':
             return ProviderProfileDetailSerializer
         return ProviderProfileListSerializer
+
+    @action(detail=True, methods=['get'], permission_classes=[permissions.AllowAny])
+    def availability(self, request, pk=None):
+        """Free slots for a provider on a specific date."""
+        from datetime import datetime
+        from bookings.services import generate_available_slots
+        provider = self.get_object()
+
+        service_id = request.query_params.get('service')
+        date_str = request.query_params.get('date')
+
+        if not service_id or not date_str:
+            raise ValidationError({"detail": "Both 'service' (ID) and 'date' (YYYY-MM-DD) query parameters are required."})
+
+        try:
+            target_date = datetime.strptime(date_str, '%Y-%m-%d').date()
+        except ValueError:
+            raise ValidationError({"date": "Invalid date format. Expected YYYY-MM-DD."})
+
+        try:
+            service = provider.services.get(pk=service_id, is_active=True)
+        except Service.DoesNotExist:
+            raise ValidationError({"service": "Active service not found for this provider."})
+
+        slots = generate_available_slots(
+            provider=provider,
+            duration_minutes=service.duration_minutes,
+            target_date=target_date,
+        )
+
+        return Response({
+            'provider_id': provider.id,
+            'business_name': provider.business_name,
+            'service_id': service.id,
+            'service_name': service.name,
+            'duration_minutes': service.duration_minutes,
+            'date': date_str,
+            'slots': [
+                {
+                    'start_at': slot['start_at'].isoformat(),
+                    'end_at': slot['end_at'].isoformat(),
+                    'time_display': slot['start_at'].strftime('%I:%M %p'),
+                }
+                for slot in slots
+            ]
+        })
+
+    @action(detail=True, methods=['get'], url_path='availability/days', permission_classes=[permissions.AllowAny])
+    def availability_days(self, request, pk=None):
+        """Calendar days in a month that have at least one free slot."""
+        from datetime import datetime
+        from bookings.services import generate_month_available_days
+        provider = self.get_object()
+
+        service_id = request.query_params.get('service')
+        month_str = request.query_params.get('month')  # YYYY-MM
+
+        if not service_id or not month_str:
+            raise ValidationError({"detail": "Both 'service' (ID) and 'month' (YYYY-MM) query parameters are required."})
+
+        try:
+            parsed_month = datetime.strptime(month_str, '%Y-%m')
+            year, month = parsed_month.year, parsed_month.month
+        except ValueError:
+            raise ValidationError({"month": "Invalid month format. Expected YYYY-MM."})
+
+        try:
+            service = provider.services.get(pk=service_id, is_active=True)
+        except Service.DoesNotExist:
+            raise ValidationError({"service": "Active service not found for this provider."})
+
+        available_days = generate_month_available_days(
+            provider=provider,
+            duration_minutes=service.duration_minutes,
+            year=year,
+            month=month,
+        )
+
+        return Response({
+            'provider_id': provider.id,
+            'service_id': service.id,
+            'month': month_str,
+            'available_days': available_days,
+        })
 
 
 class ProviderMeView(generics.RetrieveUpdateAPIView):
