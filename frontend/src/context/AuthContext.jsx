@@ -50,14 +50,18 @@ export const AuthProvider = ({ children }) => {
         password,
       });
 
-      localStorage.setItem('access_token', data.tokens.access);
-      localStorage.setItem('refresh_token', data.tokens.refresh);
-      localStorage.setItem('user_info', JSON.stringify(data.user));
+      const accessToken = data.tokens?.access || data.access;
+      const refreshToken = data.tokens?.refresh || data.refresh;
+      const userObj = data.user || data;
 
-      setUser(data.user);
-      return data.user;
+      if (accessToken) localStorage.setItem('access_token', accessToken);
+      if (refreshToken) localStorage.setItem('refresh_token', refreshToken);
+      if (userObj) localStorage.setItem('user_info', JSON.stringify(userObj));
+
+      setUser(userObj);
+      return userObj;
     } catch (err) {
-      const msg = err.response?.data?.detail || err.response?.data?.message || 'Login failed. Please verify credentials.';
+      const msg = err.response?.data?.detail || err.response?.data?.message || err.message || 'Login failed. Please verify credentials.';
       setError(msg);
       throw new Error(msg);
     }
@@ -72,18 +76,25 @@ export const AuthProvider = ({ children }) => {
       };
       const { data } = await api.post('/auth/register/', payload);
 
-      localStorage.setItem('access_token', data.tokens.access);
-      localStorage.setItem('refresh_token', data.tokens.refresh);
-      localStorage.setItem('user_info', JSON.stringify(data.user));
+      const accessToken = data.tokens?.access || data.access;
+      const refreshToken = data.tokens?.refresh || data.refresh;
+      const userObj = data.user || data;
 
-      setUser(data.user);
-      return data.user;
+      if (accessToken) localStorage.setItem('access_token', accessToken);
+      if (refreshToken) localStorage.setItem('refresh_token', refreshToken);
+      if (userObj) localStorage.setItem('user_info', JSON.stringify(userObj));
+
+      setUser(userObj);
+      return userObj;
     } catch (err) {
       const errData = err.response?.data;
       let msg = 'Registration failed. Please check inputs.';
-      if (typeof errData === 'object') {
+      if (errData && typeof errData === 'object') {
         const firstKey = Object.keys(errData)[0];
-        msg = `${firstKey}: ${Array.isArray(errData[firstKey]) ? errData[firstKey][0] : errData[firstKey]}`;
+        const val = errData[firstKey];
+        msg = `${firstKey}: ${Array.isArray(val) ? val[0] : val}`;
+      } else if (err.message) {
+        msg = err.message;
       }
       setError(msg);
       throw new Error(msg);

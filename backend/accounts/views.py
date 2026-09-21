@@ -3,6 +3,7 @@ from rest_framework.response import Response
 from rest_framework.views import APIView
 from rest_framework.throttling import ScopedRateThrottle
 from rest_framework_simplejwt.views import TokenObtainPairView
+from rest_framework_simplejwt.tokens import RefreshToken
 from django.contrib.auth import get_user_model
 from django.db import transaction
 from django.utils import timezone
@@ -24,13 +25,37 @@ User = get_user_model()
 class RegisterView(generics.CreateAPIView):
     """
     Public customer registration endpoint.
-    Strictly forces role to 'customer' and throttles abuse.
+    Strictly forces role to 'customer', issues JWT tokens, and throttles abuse.
     """
     queryset = User.objects.all()
     permission_classes = [permissions.AllowAny]
     serializer_class = RegisterSerializer
     throttle_classes = [ScopedRateThrottle]
     throttle_scope = 'auth'
+
+    def create(self, request, *args, **kwargs):
+        serializer = self.get_serializer(data=request.data)
+        serializer.is_valid(raise_exception=True)
+        user = serializer.save()
+
+        refresh = RefreshToken.for_user(user)
+        refresh['role'] = user.role
+        refresh['email'] = user.email
+        refresh['username'] = user.username
+
+        access_token_str = str(refresh.access_token)
+        refresh_token_str = str(refresh)
+        user_data = UserSerializer(user).data
+
+        return Response({
+            'refresh': refresh_token_str,
+            'access': access_token_str,
+            'tokens': {
+                'access': access_token_str,
+                'refresh': refresh_token_str,
+            },
+            'user': user_data,
+        }, status=status.HTTP_201_CREATED)
 
 
 class CustomTokenObtainPairView(TokenObtainPairView):

@@ -116,9 +116,15 @@ class CustomTokenObtainPairSerializer(TokenObtainPairSerializer):
 
         # Generate SimpleJWT tokens
         refresh = self.get_token(self.user)
+        access_token_str = str(refresh.access_token)
+        refresh_token_str = str(refresh)
         data = {
-            'refresh': str(refresh),
-            'access': str(refresh.access_token),
+            'refresh': refresh_token_str,
+            'access': access_token_str,
+            'tokens': {
+                'access': access_token_str,
+                'refresh': refresh_token_str,
+            },
             'user': {
                 'id': self.user.id,
                 'email': self.user.email,
