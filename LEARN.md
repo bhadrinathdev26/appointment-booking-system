@@ -172,4 +172,76 @@ This document tracks technical decisions, architectural patterns, and interview 
 - **Q: Why format dates with an explicit time zone like `Asia/Kolkata` on the frontend instead of relying on the user's browser clock?**
   *A:* "Service businesses operate in fixed geographic locations. If an overseas interviewer opens the app from London or New York, relying on browser local time would cause a 10:00 AM IST clinic slot to display as 4:30 AM or 00:30 AM, confusing slot availability and calendar navigation. Locking display formatting to the business timezone ensures consistency."
 
+---
+
+## Phase 8: Public Directory, Search, Filtering & Provider Overview
+
+### Key Technical Decisions
+1. **Multi-Criteria Client & Server Filtering:**
+   - The public directory allows instant category filtering (Clinics, Salons, Tutors, Fitness, Consulting) with real-time text searching matching business names, descriptions, or offered service titles.
+2. **Clean Public/Protected Route Separation:**
+   - Anyone can discover providers, inspect service offerings, and check pricing without being forced to authenticate first. Authentication is only required when clicking to book a chosen slot.
+
+### Interview Questions for Phase 8
+- **Q: Why allow unauthenticated users to browse the directory and view slots?**
+  *A:* "Public discovery maximizes booking conversion. Requiring account registration upfront creates friction. Allowing users to find a provider, pick their preferred date, and choose a slot before requesting login mirrors modern platforms like Calendly, Airbnb, and Practo."
+
+---
+
+## Phase 9: Interactive 3-Step Dynamic Booking Flow & Conflict Recovery
+
+### Key Technical Decisions
+1. **Optimized Calendar Month Queries:**
+   - When a user selects a service, the calendar queries `/api/providers/{id}/availability/days/?service={id}&month={YYYY-MM}`. The backend returns only dates containing at least one open slot, allowing `react-day-picker` to disable all booked, closed, or time-off days automatically.
+2. **Graceful 409 Conflict Recovery:**
+   - If two users submit the same slot simultaneously and the user's request fails with `HTTP 409 Conflict`, the UI catches the conflict error, displays a clear alert ("This time slot was just booked by another client. Please select another slot."), and immediately re-queries available slots for that date while preserving the user's selected date and service.
+
+### Interview Questions for Phase 9
+- **Q: How does the frontend handle booking race conditions when two users click the same slot simultaneously?**
+  *A:* "The API returns HTTP 409 Conflict. Instead of crashing or resetting the entire form, the frontend displays an informative banner explaining that the slot was just claimed, preserves the selected service and date, and re-fetches the slot list for that day so the user can immediately select an adjacent opening."
+
+---
+
+## Phase 10: Customer Appointments Portal & RFC 5545 Blob Calendar Invites
+
+### Key Technical Decisions
+1. **Client-Side Cutoff Feedback:**
+   - While the backend authoritatively rejects cancellations and reschedules within 4 hours (`CANCEL_CUTOFF_HOURS = 4`), the UI proactively calculates the remaining hours. If an appointment is within 4 hours, the Reschedule and Cancel buttons are disabled with a tooltip ("Under 4h cutoff &bull; Changes locked"), preventing unnecessary rejected requests.
+2. **Direct Blob Download via Axios:**
+   - Calendar invite files (`.ics`) are fetched using Axios with `responseType: 'blob'`. The response is converted to a browser Object URL (`window.URL.createObjectURL(blob)`) and triggered via a programmatic link click, ensuring authenticated `.ics` downloads succeed without exposing auth tokens in URL query strings.
+
+### Interview Questions for Phase 10
+- **Q: Why download calendar `.ics` files using Axios blobs instead of direct `<a href="...">` links?**
+  *A:* "Direct anchor links cannot send `Authorization: Bearer <token>` headers. Using Axios with `responseType: 'blob'` allows the request to be authenticated via our standard interceptor, and the resulting blob is downloaded safely to the user's device."
+
+---
+
+## Phase 11: Provider Operations, Multi-Interval Hours & Leave Management
+
+### Key Technical Decisions
+1. **Multi-Interval Working Hours Editor:**
+   - Providers can configure multiple distinct working intervals per day (e.g. 09:00–13:00 and 14:00–18:00), which automatically turns the intervening gap into an unbookable lunch break.
+2. **Detailed Conflict Breakdown on Leave Scheduling:**
+   - If a provider attempts to schedule time off that overlaps existing confirmed bookings, the backend returns an HTTP 400 listing the conflicting appointments. The UI renders this list directly on the modal, informing the provider which clients must be contacted or rescheduled before the leave can be recorded.
+
+### Interview Questions for Phase 11
+- **Q: How do you prevent providers from scheduling leaves over confirmed client appointments?**
+  *A:* "The provider time-off endpoint acquires a pessimistic lock on the provider profile and queries for confirmed bookings within the requested leave window. If conflicts exist, the API rejects the request with HTTP 400 and returns the conflicting booking details so the provider can resolve them."
+
+---
+
+## Phase 12: Admin Platform Operations, Role Governance & Volume Trends
+
+### Key Technical Decisions
+1. **Platform Analytics with Recharts:**
+   - Admin dashboards render an Area chart tracking 14-day daily booking registrations computed via aware datetime ranges on the backend, alongside metrics for total platform revenue and status distribution.
+2. **Administrative Invariants on Account Deactivation:**
+   - Deactivating a provider account triggers a calculation of future confirmed appointments and returns the count in the response payload, giving administrators full visibility into affected clients.
+   - Admins cannot deactivate their own account or the last remaining platform administrator.
+
+### Interview Questions for Phase 12
+- **Q: What safeguards are implemented for administrative user management?**
+  *A:* "Administrators cannot deactivate themselves or demote the last remaining active admin. When deactivating a service provider, the system calculates and reports the number of future confirmed bookings that provider holds so the administrator can take appropriate operational actions."
+
+
 
