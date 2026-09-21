@@ -79,7 +79,7 @@ if db_engine == 'mysql':
         'init_command': "SET sql_mode='STRICT_TRANS_TABLES'",
     }
     if os.environ.get('DB_SSL_REQUIRE', '').lower() in ('true', '1', 'yes'):
-        db_options['ssl'] = {'ssl': True}
+        db_options['ssl'] = {'ssl': True, 'check_hostname': False}
 
     DATABASES = {
         'default': {

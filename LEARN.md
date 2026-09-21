@@ -243,5 +243,45 @@ This document tracks technical decisions, architectural patterns, and interview 
 - **Q: What safeguards are implemented for administrative user management?**
   *A:* "Administrators cannot deactivate themselves or demote the last remaining active admin. When deactivating a service provider, the system calculates and reports the number of future confirmed bookings that provider holds so the administrator can take appropriate operational actions."
 
+---
+
+## Phase 13: Production Deployment Readiness & Free-Tier Tradeoffs
+
+### Key Technical Decisions
+1. **PaaS Blueprint Automation (`render.yaml`):**
+   - Configures Render Web Service with automated gunicorn start commands, build scripts (`collectstatic`, `migrate`), and environment variable injections.
+2. **Cloud MySQL SSL Handling:**
+   - When connecting to managed cloud databases (such as Aiven MySQL), `DB_SSL_REQUIRE=true` configures PyMySQL with `{'ssl': True, 'check_hostname': False}`, preventing certificate verification failures when connecting to shared cloud clusters.
+3. **Single-Page Application Routing on Vercel (`vercel.json`):**
+   - Configures a rewrite rule (`/(.*) -> /`) so that direct deep links (e.g. `/providers/1` or `/bookings`) do not return 404 errors on browser refresh.
+
+### Interview Questions for Phase 13
+- **Q: How do you handle database SSL connections on cloud MySQL instances in Django?**
+  *A:* "We configure the `OPTIONS` dictionary under `DATABASES['default']` in `settings.py`. When `DB_SSL_REQUIRE` is enabled via environment variables, we pass `ssl: {'ssl': True, 'check_hostname': False}` to the PyMySQL driver, allowing secure TLS communication with managed services like Aiven without host certificate mismatches."
+- **Q: What are the real-world operational constraints of running this stack on free cloud tiers?**
+  *A:* "First, Render's free tier spins down instances after 15 minutes of inactivity, causing an initial 50-second cold start on the first request. Second, free database tiers limit concurrent connection pools, requiring strict connection closing in worker threads. Third, scheduled tasks like our reminder command require external webhooks or GitHub Actions cron jobs when background celery workers are unavailable on free plans."
+
+---
+
+## Phase 14: Portfolio Presentation & Interview Defense Guide
+
+### 3-Minute Interview Pitch for SlotSync
+> *"For my third portfolio project, I built SlotSync—an appointment and dynamic slot booking platform for clinics, salons, and tutors. Most junior developers build simple CRUD applications where slots are just static database records. I wanted to tackle genuine distributed systems and business logic challenges.*
+> 
+> *First, availability is calculated dynamically on-demand in Indian Standard Time (IST) using at most two bounded SQL queries per day or month, eliminating millions of stale database records. Second, to prevent double-booking race conditions during high concurrency, booking transactions acquire pessimistic database locks in a strict uniform hierarchy: Customer first, then Provider, then Booking. This mathematically eliminates deadlocks while preventing double-bookings. Third, we enforce hard real-world constraints: a 2-hour minimum advance booking window, a strict 4-hour cancellation and rescheduling cutoff, permanent service price/duration snapshots, and RFC 5545 `.ics` calendar downloads with CRLF line endings.*
+> 
+> *I verified the system using a 41-test suite in Django, including multi-threaded concurrency tests where two Python threads compete for the exact same slot simultaneously against MySQL."*
+
+### Key Differentiation from Plain CRUD Projects
+| Plain CRUD Booking App | SlotSync (Engineered Platform) |
+| :--- | :--- |
+| Stores future available slots as rows in DB | Computes available slots dynamically in memory on request |
+| Vulnerable to concurrent double-booking | Pessimistic row locking (`SELECT FOR UPDATE`) prevents all race conditions |
+| Allows customer to double-book themselves | Customer row locking enforces single active booking per time window |
+| Uses current service price for past invoices | Captures immutable snapshots of name, price, and duration |
+| Ignores cancellation timing | Enforces strict $>4$ hour cancellation and rescheduling cutoff |
+| Plain text notifications | RFC 5545 compliant `.ics` calendar files with CRLF delimiters |
+
+
 
 
